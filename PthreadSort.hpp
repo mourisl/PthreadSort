@@ -10,30 +10,17 @@ template <class T>
 struct _pthread_sort_arg
 {
   T *S ;
-  size_t start, size_t end ;
+  size_t start, end ; // inclusive interval on S
   bool (*comp)(const T&, const T&) ;
-} ;
 
-template <class T>
-struct _pthread_merge_arg
-{
-  T *S ;
-  size_t start, size_t mid, size_t end ;
-  bool (*comp)(const T&, const T&) ;
+  int depth ;
+  int threadCnt ;
 } ;
-
 
 template <class T>
 class PthreadSort
 {
 private:
-  static void *Sort_Thread(void *pArg)
-  {
-    struct _pthread_sort_arg<T> &arg = *((struct _pthread_sort_arg *)pArg) ;
-    std::sort(arg.S + start, args.S + end + 1, comp) ;
-    pthread_exit(NULL) ;
-  }
-
   static void StdSort(T *S, size_t n, bool (*comp)(const T&, const T&))
   {
     if (comp == NULL)
@@ -42,82 +29,127 @@ private:
       std::sort(S, S + n, *comp) ;
   }
 
-  // Merge the [start, mid], (mid, end] to be sorted [start, end]
-  static void *Merge_Thread(void *pArg)
+  // Sort a segment 
+  static void *Sort_Thread(void *pArg)
   {
-    struct _pthread_merge_arg<T> &arg = *((struct _pthread_merge_arg *)pArg) ;
-    size_t i, j, k ;
+    struct _pthread_sort_arg<T> &arg = *((struct _pthread_sort_arg<T> *)pArg) ;
+    size_t start = arg.start ;
+    size_t end = arg.end ;
+    printf("region sort: %lu %lu. %lu\n", start, end, arg.S[10]);
+    if (start < end)
+      StdSort(arg.S + start, end - start + 1, arg.comp) ;
+    //printf("region sort: %lu %lu. %lu\n", start, end, arg.S[10]);
+    pthread_exit(NULL) ;
+  }
+
+  static void Swap(T &a, T &b)
+  {
+    T tmp ;
+    tmp = a ; a = b ; b = tmp ;
+  }
+
+  // Merge the [start, mid], (mid, end] to be sorted [start, end]
+  static void *QSort_Thread(void *pArg)
+  {
+    int i ;
+    struct _pthread_sort_arg<T> &arg = *((struct _pthread_sort_arg<T> *)pArg) ;
     
-    i = arg.start ;
-    j = arg.mid + 1 ;
+    if (arg.start >= arg.end)
+      pthread_exit(NULL) ;
+    size_t s = arg.start ;
+    T *S = arg.S ;
+    
+    Swap(S[s], S[(arg.start + arg.end)/2]) ;
 
-    while (i <= mid && j <= arg.end)
+    size_t pi = arg.start + 1 ; // pi points to the current process element
+    size_t pj = arg.end + 1 ; // pj points the first element of the second chunk
+
+    while (pi < pj)
     {
-      if ((arg.comp ? (*(arg.comp))(S[i], S[j]) : (S[i] < S[j])))
+      bool lessThanPivot = (arg.comp ? (*(arg.comp))(S[pi], S[s]) : (S[pi] < S[s])) ;
+      if (lessThanPivot)
+        ++pi ;
+      else 
       {
+        Swap(S[pi], S[pj - 1]) ;
+        --pj ;
+      }
+    }
+    Swap(S[s], S[pi-1]) ;
+    
+    pthread_t threads[2] ;
+    struct _pthread_sort_arg<T> sortArgs[2] ;
+    pthread_attr_t attr ;
 
+    pthread_attr_init( &attr ) ;
+    pthread_attr_setdetachstate( &attr, PTHREAD_CREATE_JOINABLE ) ;
+  
+    for (i = 0 ; i < 2 ; ++i)
+    {
+      sortArgs[i].S = arg.S ;
+      sortArgs[i].comp = arg.comp ;
+      sortArgs[i].depth = arg.depth + 1 ;
+      sortArgs[i].threadCnt = arg.threadCnt ;
+      if (i == 0)
+      {
+        sortArgs[i].start = arg.start ;
+        if (pi >= 2)
+          sortArgs[i].end = pi - 2 ;
+        else
+          sortArgs[i].end = arg.start ;
+      }
+      else
+      {
+        sortArgs[i].start = pi ;
+        sortArgs[i].end = arg.end ;
       }
     }
 
+    if ((1 << arg.depth) * 4 > arg.threadCnt)
+    {
+      pthread_create(&threads[0], &attr, Sort_Thread, (void *)(sortArgs + 0)) ;
+      pthread_create(&threads[1], &attr, Sort_Thread, (void *)(sortArgs + 1)) ;
+    }
+    else
+    {
+      pthread_create(&threads[0], &attr, QSort_Thread, (void *)(sortArgs + 0)) ;
+      pthread_create(&threads[1], &attr, QSort_Thread, (void *)(sortArgs + 1)) ;
+    }
+
+    for (i = 0 ; i < 2 ; ++i)
+      pthread_join(threads[i], NULL) ;
+    pthread_attr_destroy( &attr ) ;
+    pthread_exit(NULL) ;
   }
+
 public:
-  static void Sort(T *S, size_t n, int threadCnt, bool (*comp)(const T&, const T&))
+  static void Sort(T *S, size_t n, int threadCnt, bool (*comp)(const T&, const T&) = NULL)
   {
-    size_t i, j ;
+    size_t i ;
     size_t step = n ;
-    if (n < threadCnt)
+    if (n < threadCnt || threadCnt == 1)
     {
       StdSort(S, n, comp) ;
       return ;
     }
     
-    std::vector<std::pair<size_t, size_t> > segs ;
-    int segCnt ;
-    size_t block = n / threadCnt ;
-    for (i = 0 ; i < threadCnt ; ++i)
-    {
-      size_t start = i * block ;
-      size_t end = i * block + block - 1 ;
-      if (end == threadCnt - 1)
-        end = n - 1 ;
-
-      std::pair<size_t, size_t> ns ;
-      ns.first = start ;
-      ns.second = end ;
-      segs.push_back(ns) ;
-    }
-
-    segCnt = segs.size() ;
-
-    // Sort the leaf segments
-    pthread_t *threads = new pthread_t[ threadCnt ] ;
-    struct _pthread_sort_arg<T> *sortArgs  = new struct _pthread_sort_arg<T>[threadCnt] ;
+    pthread_t thread ;
+    struct _pthread_sort_arg<T> sortArg ; 
     pthread_attr_t attr ;
 
     pthread_attr_init( &attr ) ;
     pthread_attr_setdetachstate( &attr, PTHREAD_CREATE_JOINABLE ) ;
 
-    for (i = 0 ; i < threadCnt ; ++i)
-    {
-      sortArgs[i].S = S ;
-      sortArgs[i].start = segs[i].first ;
-      sortArgs[i].end = segs[i].end ;
-      sortArgs[i].comp = comp ;
+    sortArg.S = S ;
+    sortArg.start = 0 ;
+    sortArg.end = n - 1 ;
+    sortArg.comp = comp ;
+    sortArg.depth = 0 ;
+    sortArg.threadCnt = threadCnt ;
 
-      pthread_create(&threads[i], &attr, Sort_Thread, (void *)(sortArgs + i)) ;
-    }
+    pthread_create(&thread, &attr, QSort_Thread, (void *)(&sortArg)) ;
+    pthread_join(thread, NULL) ;
 
-    for (i = 0 ; i < threadCnt ; ++i)
-      pthread_join(threads[i], NULL) ;
-    delete[] sortArgs ;
-
-    // Merge the segments
-    while (segCnt > 1)
-    {
-      int usedThread = 0 ;
-    }
-
-    delete[] threads ;
     pthread_attr_destroy(&attr) ;
   }
 } ;
