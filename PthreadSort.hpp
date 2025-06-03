@@ -35,7 +35,7 @@ private:
     struct _pthread_sort_arg<T> &arg = *((struct _pthread_sort_arg<T> *)pArg) ;
     size_t start = arg.start ;
     size_t end = arg.end ;
-    printf("region sort: %lu %lu. %lu\n", start, end, arg.S[10]);
+    //printf("region sort: %lu %lu. %lu\n", start, end, arg.S[10]);
     if (start < end)
       StdSort(arg.S + start, end - start + 1, arg.comp) ;
     //printf("region sort: %lu %lu. %lu\n", start, end, arg.S[10]);
