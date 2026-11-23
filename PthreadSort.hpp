@@ -58,12 +58,60 @@ private:
     tmp = a ; a = b ; b = tmp ;
   }
 
+	// Is a should precede b in the sorted order?
+	// Use less than by default.
+	static bool APrecB(const T &a, const T &b, bool (*comp)(const T&, const T&))
+	{
+		if (comp != NULL)
+			return comp(a, b) ;
+		else
+			return a < b ;
+	}
+
+	// For the k-smallest element in S[s1..e1] and S[s2..e2], find the rank of k in S[s1..e1], e.g., number of elements in S[s1..e1] that are smaller than the k-smallest element in S[s1..e1] and S[s2..e2].
+	size_t CoRank(T *S, size_t s1, size_t e1, size_t s2, size_t e2, size_t k, bool (*comp)(const T&, const T&))
+	{
+		size_t l, r, m ;
+		l = s1, r = e1 ;
+		if (e1 - s1 + 1 > k)
+			r = s1 + k - 1 ;
+		if (e2 - s2 + 1 < k)
+			l = s1 + k - (e2 - s2 + 1) ;
+		
+		while (l <= r)
+		{
+			m = (l + r) / 2 ;
+
+			if (APrecB(S[m], S[s2 + k - (m - s1) - 1], comp)) // The guess is too few.
+				l = m + 1 ;
+			else
+				r = m - 1 ;
+		}
+
+		return m - s1 ; // (m-1)-s1+1
+	}
+
+	// Assume s1<s2. 
+	// allow target to overlapping with S[s1, e1] and S[s2, e2]
+	void Merge(T *S, size_t s1, size_t e1, size_t s2, size_t e2, T *target, bool (*comp)(const T&, const T&))
+	{
+		size_t i, j ;
+		i = s1, j = s2 ;
+		while (i <= e1 && j <= s2)
+		{
+			if (APrecB(S[i], S[j], comp))
+				targe[] = S[i++] ;
+			else
+				*target++ = S[j++] ;
+		}
+	}
+
 public:
   static void Sort(T *S, size_t n, int threadCnt, bool (*comp)(const T&, const T&) = NULL)
   {
     size_t i ;
     size_t step = n ;
-    if (n < threadCnt || threadCnt == 1)
+    if (n < threadCnt || n < 10000 || threadCnt == 1)
     {
       StdSort(S, n, comp) ;
       return ;
