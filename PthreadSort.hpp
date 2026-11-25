@@ -10,7 +10,6 @@
 template <class T>
 class PthreadSort
 {
-	template <class T>
 	struct _pthread_sort_arg
 	{
 		T *S ;
@@ -20,7 +19,6 @@ class PthreadSort
 		int threadCnt ;
 	} ;
 
-	template <class T>
 	struct _pthread_merge_arg
 	{
 		T *S ;
@@ -44,7 +42,7 @@ private:
   // Sort a segment 
   static void *Sort_Thread(void *pArg)
   {
-    struct _pthread_sort_arg<T> &arg = *((struct _pthread_sort_arg<T> *)pArg) ;
+    struct _pthread_sort_arg &arg = *((struct _pthread_sort_arg *)pArg) ;
     size_t start = arg.start ;
     size_t end = arg.end ;
     //printf("region sort: %lu %lu. %lu\n", start, end, arg.S[10]);
@@ -56,7 +54,7 @@ private:
 
 	static void *Merge_Thread(void *pArg)
 	{
-		struct _pthread_sort_arg<T> &arg = *((struct _pthread_sort_arg<T> *)pArg) ;
+		struct _pthread_merge_arg &arg = *((struct _pthread_merge_arg *)pArg) ;
 		Merge(arg.S, arg.s1, arg.e1, arg.s2, arg.e2, arg.buffer + arg.s1, arg.comp) ;
 
 		// copy back
@@ -64,6 +62,7 @@ private:
 		size_t totalCnt = arg.e1 - arg.s1 + 1 + arg.e2 - arg.s2 + 1 ;
 		for (i = 0 ; i < totalCnt ; i++)
 			arg.S[arg.s1 + i] = arg.buffer[arg.s1 + i] ;
+		pthread_exit(NULL) ;
 	}
 
   static void Swap(T &a, T &b)
@@ -83,7 +82,7 @@ private:
 	}
 
 	// For the k-smallest element in S[s1..e1] and S[s2..e2], find the rank of k in S[s1..e1], e.g., number of elements in S[s1..e1] that are smaller than the k-smallest element in S[s1..e1] and S[s2..e2].
-	size_t CoRank(T *S, size_t s1, size_t e1, size_t s2, size_t e2, size_t k, bool (*comp)(const T&, const T&))
+	static size_t CoRank(T *S, size_t s1, size_t e1, size_t s2, size_t e2, size_t k, bool (*comp)(const T&, const T&))
 	{
 		size_t l, r, m ;
 		l = s1, r = e1 ;
@@ -106,7 +105,7 @@ private:
 	}
 
 	// Assume s1<s2. 
-	void Merge(T *S, size_t s1, size_t e1, size_t s2, size_t e2, T *target, bool (*comp)(const T&, const T&))
+	static void Merge(T *S, size_t s1, size_t e1, size_t s2, size_t e2, T *target, bool (*comp)(const T&, const T&))
 	{
 		size_t i, j, k ;
 		i = s1, j = s2 ;
@@ -115,7 +114,7 @@ private:
 		{
 			if (APrecB(S[i], S[j], comp))
 			{
-				targe[k] = S[i] ;
+				target[k] = S[i] ;
 				++i ;
 			}
 			else
@@ -162,7 +161,7 @@ public:
 		size_t *mergeCutRank = new size_t[threadCnt] ; 
 
     // Sort segment in parallel
-		struct _pthread_sort_arg<T> *sortArgs = new struct _pthread_sort_arg<T>[threadCnt] ; 
+		struct _pthread_sort_arg *sortArgs = new struct _pthread_sort_arg[threadCnt] ; 
 		size_t remainder = n % threadCnt ;
 		for (i = 0 ; i < threadCnt ; i++)
 		{
@@ -175,7 +174,7 @@ public:
 			else
 			{
 				sortArgs[i].start = i * (n / threadCnt) + remainder ;
-				sortArgs.end =  (i + 1) * (n / threadCnt) + remainder - 1 ;
+				sortArgs[i].end =  (i + 1) * (n / threadCnt) + remainder - 1 ;
 			}
 
 			sortArgs[i].comp = comp ;
@@ -183,13 +182,13 @@ public:
 		}
 
 		for (i = 0 ; i < threadCnt ; ++i)
-			pthread_create(&thread[i], &attr, Sort_Thread, (void *)(&sortArgs[i])) ;
+			pthread_create(&threads[i], &attr, Sort_Thread, (void *)(&sortArgs[i])) ;
 
 		for (i = 0 ; i < threadCnt ; ++i)
-			pthread_join(thread[i], NULL) ;
+			pthread_join(threads[i], NULL) ;
 
 		// Merge the sorted segments
-		struct _pthread_merge_arg<T> *mergeArgs = new struct _pthread_merge_arg<T>[threadCnt] ;
+		struct _pthread_merge_arg *mergeArgs = new struct _pthread_merge_arg[threadCnt] ;
 		size_t stride = 1 ; // the stride for the segment
 		for (stride = 1 ; stride < threadCnt ; stride *= 2)
 		{
@@ -199,6 +198,7 @@ public:
 				size_t e1 = sortArgs[i + stride - 1].end ;
 
 				size_t s2 = sortArgs[i + stride].start ;
+				size_t e2 = 0 ;
 				if (i + 2 * stride - 1 < threadCnt)
 					e2 = sortArgs[i + 2 * stride - 1].end ;
 				else
@@ -241,9 +241,9 @@ public:
 				}
 
 				for (i = 0 ; i < threadCnt ; ++i)
-					pthread_create(&thread[i], &attr, Merge_Thread, (void *)(&mergeArgs[i])) ;
+					pthread_create(&threads[i], &attr, Merge_Thread, (void *)(&mergeArgs[i])) ;
 				for (i = 0 ; i < threadCnt ; ++i)
-					pthread_join(thread[i], NULL) ;
+					pthread_join(threads[i], NULL) ;
 			}
 		}
 
