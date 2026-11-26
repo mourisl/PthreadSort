@@ -14,16 +14,28 @@ using timer = std::chrono::high_resolution_clock;
 
 int main()
 {
-  int n = 50000000 ;
+  int n = 100000000 ;
   std::vector<double> A, B ;
   int i ;
   for (i = 0 ; i < n ; ++i)
   {
     int val = n - i ;
+    //int val = ((n - i) * 9723) % 11 ;
     A.push_back(val) ;
     B.push_back(val) ;
   }
-  
+
+	/*std::sort(A.begin(), A.begin() + 10) ;
+	std::sort(A.begin() + 10, A.begin() + 20) ;
+	std::cout<<std::endl ;
+
+	double buffer[20] ;
+	PthreadSort<double>::Merge(&A[0], 0, 10, 10, 10, buffer, NULL) ;
+	for (i = 0 ; i < 20 ; ++i)
+		std::cout<<buffer[i]<<" " ;
+	std::cout<<std::endl ;
+	return 0 ;*/
+
   auto start = timer::now();
   std::sort(A.begin(), A.end()) ;
   auto end = timer::now() ;

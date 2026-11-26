@@ -6,7 +6,6 @@
 #include <stdio.h>
 #include <pthread.h>
 
-
 template <class T>
 class PthreadSort
 {
@@ -24,7 +23,9 @@ class PthreadSort
 		T *S ;
 		T *buffer ;
 
-		size_t s1, e1, s2, e2 ; // inclusive interval on S
+		size_t s1, n1, s2, n2 ; // intervals like [s1..s1+n1-1] and [s2..s2+n2-1]
+														// use n1 to handle empty intervals
+		size_t offset ; // the offset in S for the merged result
 		bool (*comp)(const T&, const T&) ;
 
 		int threadCnt ;
@@ -55,13 +56,18 @@ private:
 	static void *Merge_Thread(void *pArg)
 	{
 		struct _pthread_merge_arg &arg = *((struct _pthread_merge_arg *)pArg) ;
-		Merge(arg.S, arg.s1, arg.e1, arg.s2, arg.e2, arg.buffer + arg.s1, arg.comp) ;
+		Merge(arg.S, arg.s1, arg.n1, arg.s2, arg.n2, arg.buffer, arg.comp) ;
+	
+		pthread_exit(NULL) ;
+	}
 
+	static void *Copy_Thread(void *pArg)
+	{
+		struct _pthread_merge_arg &arg = *((struct _pthread_merge_arg *)pArg) ;
 		// copy back
 		size_t i ;
-		size_t totalCnt = arg.e1 - arg.s1 + 1 + arg.e2 - arg.s2 + 1 ;
-		for (i = 0 ; i < totalCnt ; i++)
-			arg.S[arg.s1 + i] = arg.buffer[arg.s1 + i] ;
+		for (i = arg.s1 ; i < arg.s1 + arg.n1 ; ++i)
+			arg.S[i] = arg.buffer[i] ;
 		pthread_exit(NULL) ;
 	}
 
@@ -82,6 +88,7 @@ private:
 	}
 
 	// For the k-smallest element in S[s1..e1] and S[s2..e2], find the rank of k in S[s1..e1], e.g., number of elements in S[s1..e1] that are smaller than the k-smallest element in S[s1..e1] and S[s2..e2].
+	// k is 1-based, rank is also 1-based
 	static size_t CoRank(T *S, size_t s1, size_t e1, size_t s2, size_t e2, size_t k, bool (*comp)(const T&, const T&))
 	{
 		size_t l, r, m ;
@@ -95,52 +102,72 @@ private:
 		{
 			m = (l + r) / 2 ;
 
-			if (APrecB(S[m], S[s2 + k - (m - s1) - 1], comp)) // The guess is too few.
-				l = m + 1 ;
+			// We select S[s1..m] and the remaining elements from S[s2..m'], m'=s2+k-(m-s1+1)-1. If s[m]>=s[m'+1], then we guess too many elements from S[s1..e1], otherwise we guess too few elements.
+			if (APrecB(S[s2 + k - (m - s1 + 1)], S[m], comp)) // The guess is too much. The order in the argument list makes sure we prefer elements from s1..e1
+			{
+				if (m > 0)
+					r = m - 1 ;
+				else
+					break ;
+			}
 			else
-				r = m - 1 ;
+				l = m + 1 ;
 		}
-
-		return m - s1 ; // (m-1)-s1+1
+		return l - s1 ; // (m-1)-s1+1
 	}
 
+public:
 	// Assume s1<s2. 
-	static void Merge(T *S, size_t s1, size_t e1, size_t s2, size_t e2, T *target, bool (*comp)(const T&, const T&))
+	static void Merge(T *S, size_t s1, size_t n1, size_t s2, size_t n2, T *target, bool (*comp)(const T&, const T&))
 	{
 		size_t i, j, k ;
-		i = s1, j = s2 ;
+		i = 0, j = 0 ;
 		k = 0 ;
-		while (i <= e1 && j <= s2)
+		while (i < n1 && j < n2)
 		{
-			if (APrecB(S[i], S[j], comp))
+			if (APrecB(S[s2 + j], S[s1 + i], comp))
 			{
-				target[k] = S[i] ;
-				++i ;
+				target[k] = S[s2+j] ;
+				++j ;
 			}
 			else
 			{
-				target[k] = S[j] ;
-				++j ;
+				target[k] = S[s1+i] ;
+				++i ;
 			}
 			++k ;
 		}
-
-		while (i <= e1)
+		
+		while (i < n1)
 		{
-			target[k] = S[i] ;
+			target[k] = S[s1+i] ;
 			++i ;
 			++k ;
 		}
 
-		while (j <= e2)
+		while (j < n2)
 		{
-			target[k] = S[j] ;
+			target[k] = S[s2+j] ;
 			++j ;
 			++k ;
 		}
 	}
 
 public:
+	static bool IsSorted(T *S, size_t n, bool (*comp)(const T&, const T&) = NULL)
+	{
+		size_t i ;
+		for (i = 1 ; i < n ; i++)
+		{
+			if (APrecB(S[i], S[i - 1], comp))
+			{
+				printf("IsSorted: %lu %lu. %lf %lf\n", i, n, S[i], S[i-1]) ;
+				return false ;
+			}
+		}
+		return true ;
+	}
+
   static void Sort(T *S, size_t n, int threadCnt, bool (*comp)(const T&, const T&) = NULL)
   {
     size_t i, j ;
@@ -218,39 +245,64 @@ public:
 				{
 					mergeArgs[j].S = S ;
 					if (j == 0)
+					{
 						mergeArgs[j].s1 = s1 ; // Notice the s1,e1 in mergeArgs are subblocks in S[s1..e1] and S[s2..e2]
+						mergeArgs[j].n1 = mergeCutRank[0] ;
+					}
 					else
+					{
 						mergeArgs[j].s1 = s1 + mergeCutRank[j - 1] ;
-
-					mergeArgs[j].e1 = s1 + mergeCutRank[j] - 1 ;
+						mergeArgs[j].n1 = mergeCutRank[j] - mergeCutRank[j - 1] ;
+					}
 
 					if (j == 0)
 						mergeArgs[j].s2 = s2 ;
 					else
 						mergeArgs[j].s2 = s2 + j * chunkSize - mergeCutRank[j - 1] ;
 
-					if (j < threadCnt - 1)
-						mergeArgs[j].e2 = s2 + (j + 1) * chunkSize - mergeCutRank[j] - 1 ;
+					if (j == 0)
+						mergeArgs[j].n2 = chunkSize - mergeCutRank[0] ;
+					else if (j < threadCnt - 1)
+						mergeArgs[j].n2 = chunkSize - mergeCutRank[j] + mergeCutRank[j - 1] ;
 					else
-						mergeArgs[j].e2 = e2 ;
+						mergeArgs[j].n2 = e2 - mergeArgs[j].s2 + 1 ;
 
-					mergeArgs[j].buffer = buffer ;
+					mergeArgs[j].offset = s1 + j * chunkSize ;
+					mergeArgs[j].buffer = buffer + s1 + j * chunkSize ;
 				
 					mergeArgs[j].comp = comp ;
 					mergeArgs[j].threadCnt = threadCnt ;
+					//printf("merge: %lu %lu %lu %lu. %lu. %lf %lf\n", mergeArgs[j].s1, mergeArgs[j].n1, mergeArgs[j].s2, mergeArgs[j].n2, s1 + j * chunkSize, S[mergeArgs[j].s1], S[mergeArgs[j].s2]) ;
 				}
 
-				for (i = 0 ; i < threadCnt ; ++i)
-					pthread_create(&threads[i], &attr, Merge_Thread, (void *)(&mergeArgs[i])) ;
-				for (i = 0 ; i < threadCnt ; ++i)
-					pthread_join(threads[i], NULL) ;
+				for (j = 0 ; j < threadCnt ; ++j)
+					pthread_create(&threads[j], &attr, Merge_Thread, (void *)(&mergeArgs[j])) ;
+
+				for (j = 0 ; j < threadCnt ; ++j)
+					pthread_join(threads[j], NULL) ;
+
 			}
+		
+			// Copy back the merged result to S
+			for (j = 0 ; j < threadCnt ; ++j)
+			{
+				mergeArgs[j].s1 = n / threadCnt * j ;
+				mergeArgs[j].n1 = (j == threadCnt - 1) ? (n - j * n/threadCnt) : n/threadCnt ;
+				mergeArgs[j].buffer = buffer ;
+			}
+
+			for (j = 0 ; j < threadCnt ; ++j)
+				pthread_create(&threads[j], &attr, Copy_Thread, (void *)(&mergeArgs[j])) ;
+
+			for (j = 0 ; j < threadCnt ; ++j)
+				pthread_join(threads[j], NULL) ;
 		}
 
-    pthread_attr_destroy(&attr) ;
+		pthread_attr_destroy(&attr) ;
 
 		delete[] threads ;
 		delete[] sortArgs ;
+		delete[] buffer ;
 		delete[] mergeCutRank ;
 		delete[] mergeArgs ;
   }
