@@ -196,7 +196,7 @@ public:
 			if (i < remainder)
 			{
 				sortArgs[i].start = i * (n / threadCnt) + i ;
-				sortArgs[i].end =  (i + 1) * (n / threadCnt) + i - 1 ;
+				sortArgs[i].end =  (i + 1) * (n / threadCnt) + i ;
 			}
 			else
 			{
@@ -219,11 +219,11 @@ public:
 		size_t stride = 1 ; // the stride for the segment
 		for (stride = 1 ; stride < threadCnt ; stride *= 2)
 		{
-			for (i = 0 ; i < threadCnt ; i += 2 * stride)
+			for (i = 0 ; i + stride < threadCnt ; i += 2 * stride)
 			{
 				size_t s1 = sortArgs[i].start ;
 				size_t e1 = sortArgs[i + stride - 1].end ;
-
+				
 				size_t s2 = sortArgs[i + stride].start ;
 				size_t e2 = 0 ;
 				if (i + 2 * stride - 1 < threadCnt)
@@ -280,14 +280,21 @@ public:
 
 				for (j = 0 ; j < threadCnt ; ++j)
 					pthread_join(threads[j], NULL) ;
+			}
 
+			if (stride == 1 && i < threadCnt)
+			{
+				// Copy the last segment to the buffer, so buffer and main output array can be consistent
+				// i+1 is beyond threadCnt
+				for (j = sortArgs[i].start ; j <= sortArgs[i].end ; ++j)
+					buffer[j] = S[j] ;
 			}
 		
 			// Copy back the merged result to S
 			for (j = 0 ; j < threadCnt ; ++j)
 			{
-				mergeArgs[j].s1 = n / threadCnt * j ;
-				mergeArgs[j].n1 = (j == threadCnt - 1) ? (n - j * n/threadCnt) : n/threadCnt ;
+				mergeArgs[j].s1 = (n / threadCnt) * j ;
+				mergeArgs[j].n1 = (j == threadCnt - 1) ? (n - (n/threadCnt)*j) : n/threadCnt ;
 				mergeArgs[j].buffer = buffer ;
 			}
 
