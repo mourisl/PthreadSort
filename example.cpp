@@ -25,17 +25,6 @@ int main()
     B.push_back(val) ;
   }
 
-	/*std::sort(A.begin(), A.begin() + 10) ;
-	std::sort(A.begin() + 10, A.begin() + 20) ;
-	std::cout<<std::endl ;
-
-	double buffer[20] ;
-	PthreadSort<double>::Merge(&A[0], 0, 10, 10, 10, buffer, NULL) ;
-	for (i = 0 ; i < 20 ; ++i)
-		std::cout<<buffer[i]<<" " ;
-	std::cout<<std::endl ;
-	return 0 ;*/
-
   auto start = timer::now();
   std::sort(A.begin(), A.end()) ;
   auto end = timer::now() ;
